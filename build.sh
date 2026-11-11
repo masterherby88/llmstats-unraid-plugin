@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PLUGIN_NAME="llmstats"
-AUTHOR="jo-sobo"
+AUTHOR="masterherby88"
 GIT_URL="https://github.com/${AUTHOR}/llmstats-unraid-plugin"
 SUPPORT_URL="https://forums.unraid.net/topic/199438-plugin-llmstats"
 PACKAGE_DIR_FINAL="packages"

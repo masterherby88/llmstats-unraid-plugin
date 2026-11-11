@@ -27,6 +27,7 @@ Supported server types:
 - Server type autodetection with manual fallback.
 - Collapsed dashboard state with compact server status chips.
 - Configurable refresh interval.
+- AI router provider stats (OpenRouter, OpenAI, Anthropic): 24h tokens, average tokens per request, cache hit rate, cost and top models per provider. See [AI router providers](#ai-router-providers).
 - Light and dark theme support.
 - Settings page with server management (add, remove, reorder, test) and setup guidance.
 
@@ -60,6 +61,7 @@ Available settings:
 - **Automatic refresh:** Enable or disable dashboard updates.
 - **Refresh interval:** Set how often the widget polls the configured servers.
 - **Unload confirmation:** Require a confirmation dialog before unload actions.
+- **AI router providers:** Enable OpenRouter, OpenAI and/or Anthropic and enter the management/admin key for each. Set the provider update interval (5, 15, 30, 60 or 120 minutes).
 - **Server configuration:** Add, remove, reorder, and test servers. Each server has a display name, URL, and server type (autodetect, Ollama, or llama-server).
 - **Model display:** Choose per server which supported fields appear on model cards. The model name is always shown. Busy/idle state is selected by default; load/unload controls are optional and off by default. Quantization and memory are Ollama-only display stats, so those settings are unavailable for llama-server.
 
@@ -97,6 +99,18 @@ Official references:
 - [llama-server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)
 - [llama-server README](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
 
+## AI Router Providers
+
+The dashboard shows a card per enabled provider below the server panels, covering the last 24 hours.
+
+| Provider | Key needed | Requests | Cache hit rate | Cost | Notes |
+|---|---|---|---|---|---|
+| OpenRouter | Management key | yes | yes | yes | Activity API has daily totals only and lags about one day, so the window is yesterday + today (UTC). |
+| OpenAI | Admin key (`sk-admin-…`) | yes | yes | yes | Costs are daily buckets; the window is rounded down to the UTC day. |
+| Anthropic | Admin key (`sk-ant-admin…`) | no | yes | yes | The usage report has no request count, so requests and average tokens per request show n/a. |
+
+Keys are stored in the plugin config (`/boot/config/plugins/llmstats/llmstats.cfg`), are never sent to the browser, and are only used by the server to query the provider APIs. Results are cached in `/tmp` for the configured update interval. Azure AI Foundry is not supported yet.
+
 ## Known Limitations
 
 - Not every server exposes the same metadata; unsupported values are unavailable for that server type.
@@ -107,6 +121,14 @@ Official references:
 ## How It Works
 
 The dashboard widget polls a local plugin API at the configured refresh interval. The plugin probes all configured servers in parallel from the Unraid host, autodetects the server type where requested, and assembles a per-server state with models, metadata, and load state. Load and unload actions are validated against the saved server list and executed server-side.
+
+## Development Build from This Fork
+
+A test build from the `dev` branch of [masterherby88/llmstats-unraid-plugin](https://github.com/masterherby88/llmstats-unraid-plugin) can be installed with:
+
+```text
+https://raw.githubusercontent.com/masterherby88/llmstats-unraid-plugin/dev/llmstats.plg
+```
 
 ## Support
 

@@ -1,3 +1,7 @@
+### Unreleased
+- Added AI router provider stats for OpenRouter, OpenAI and Anthropic: 24h tokens, average tokens per request, cache hit rate, cost and top models, shown as cards below the server panels.
+- Settings: per-provider enable checkbox, management/admin key and update interval (5-120 minutes).
+
 ### 2026.06.23
 - Model card border is now yellow for loading models and light blue for sleeping models.
 
