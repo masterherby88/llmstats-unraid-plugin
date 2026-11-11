@@ -1,18 +1,25 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
  <!ENTITY name "llmstats">
- <!ENTITY author "jo-sobo">
- <!ENTITY version "2026.06.23">
- <!ENTITY branch "main">
- <!ENTITY gitURL "https://github.com/jo-sobo/llmstats-unraid-plugin">
+ <!ENTITY author "masterherby88">
+ <!ENTITY version "2026.11.11-dev">
+ <!ENTITY branch "dev">
+ <!ENTITY gitURL "https://github.com/masterherby88/llmstats-unraid-plugin">
  <!ENTITY supportURL "https://forums.unraid.net/topic/199438-plugin-llmstats">
- <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
+ <!ENTITY pluginURL "&gitURL;/raw/&branch;/packages/&name;-&version;.txz">
  <!ENTITY selfURL "&gitURL;/raw/&branch;/&name;.plg">
 ]>
 
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&selfURL;" min="6.9.0" support="&supportURL;">
 
 <CHANGES>
+### 2026.11.11-dev
+- Development build from the 'dev' branch. For testing purposes only.
+
+### Unreleased
+- Added AI router provider stats for OpenRouter, OpenAI and Anthropic: 24h tokens, average tokens per request, cache hit rate, cost and top models, shown as cards below the server panels.
+- Settings: per-provider enable checkbox, management/admin key and update interval (5-120 minutes).
+
 ### 2026.06.23
 - Model card border is now yellow for loading models and light blue for sleeping models.
 
@@ -40,7 +47,7 @@
 
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;.txz" Run="upgradepkg --install-new">
 <URL>&pluginURL;</URL>
-<MD5>2fa8a08e3dd727086efc8ac3c126e2d3</MD5>
+<MD5>ce3d3be3d3caa6ac0703f8721a7dc01f</MD5>
 </FILE>
 
 <FILE Run="/bin/bash">
