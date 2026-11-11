@@ -1,6 +1,7 @@
 <?php
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/llmstats/llmstats_common.php';
+require_once '/usr/local/emhttp/plugins/llmstats/llmstats_providers.php';
 
 function llmstats_http_multi($requests, $connect_timeout = 2, $timeout = 5)
 {
@@ -915,6 +916,10 @@ if ($method === 'GET' && $action === 'get_server_states') {
         'confirmUnload' => ($cfg['CONFIRM_UNLOAD'] ?? '1') === '1',
         'generatedAt' => date('H:i:s')
     ]);
+}
+
+if ($method === 'GET' && $action === 'get_provider_stats') {
+    llmstats_json_response(llmstats_provider_stats($cfg));
 }
 
 if ($method === 'GET' && $action === 'test_server') {

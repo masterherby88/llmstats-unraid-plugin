@@ -4,6 +4,7 @@ Icon="llmstats.png"
 <?php
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/llmstats/llmstats_common.php';
+require_once '/usr/local/emhttp/plugins/llmstats/llmstats_providers.php';
 
 $cfg = llmstats_read_cfg('llmstats');
 $llmstats_theme_light = llmstats_theme_is_light();
@@ -31,6 +32,7 @@ if (!is_string($llmstats_text_js)) {
 }
 
 $refresh_enabled = ($cfg['REFRESH_ENABLED'] ?? '1') === '1';
+$providers_enabled = count(llmstats_provider_enabled_ids($cfg)) > 0;
 $refresh_interval = llmstats_clamp_refresh_interval($cfg['REFRESH_INTERVAL'] ?? 10);
 $refresh_interval_ms = $refresh_interval * 1000;
 
@@ -44,6 +46,7 @@ $settings_title = htmlspecialchars($llmstats_text['settings'], ENT_QUOTES, 'UTF-
 $refresh_title = htmlspecialchars($llmstats_text['refresh'], ENT_QUOTES, 'UTF-8');
 $last_update_text = htmlspecialchars($llmstats_text['lastUpdate'], ENT_QUOTES, 'UTF-8');
 $unload_all_text = htmlspecialchars($llmstats_text['unloadAll'], ENT_QUOTES, 'UTF-8');
+$providers_html = $providers_enabled ? '<div id="llmstats-providers" class="llm-providers"></div>' : '';
 
 $pluginname = 'llmstats';
 
@@ -82,6 +85,7 @@ $mytiles[$pluginname]['column1'] = <<<EOT
                     <div id="llmstats-tab-bar" role="tablist" aria-label="{$tile_title}"></div>
                 </div>
                 <div id="llmstats-panels"></div>
+                {$providers_html}
                 <div id="llmstats-footer">
                     <span><span class="llmstats-updated-at">{$last_update_text}</span> <span id="llmstats-timestamp"></span></span>
                     <span><button id="llmstats-unload-all" class="llm-button danger" type="button" disabled>{$unload_all_text}</button></span>
@@ -587,6 +591,20 @@ EOT;
         display: none;
     }
 }
+#db-llmstats .llm-providers { margin-top: 10px; border-top: 1px solid var(--llm-border-soft); padding: 8px 12px 4px; }
+#db-llmstats .llm-providers-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--llm-muted-text); padding-bottom: 6px; }
+#db-llmstats .llm-provider-card { background: var(--llm-row-surface); border: 1px solid var(--llm-border-soft); padding: 8px 10px; margin-bottom: 8px; }
+#db-llmstats .llm-provider-top { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--llm-strong-text); margin-bottom: 6px; }
+#db-llmstats .llm-provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--llm-red); flex: none; }
+#db-llmstats .llm-provider-dot.ok { background: var(--llm-green); }
+#db-llmstats .llm-provider-error { color: var(--llm-danger-text); font-size: 12px; }
+#db-llmstats .llm-provider-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 6px 10px; }
+#db-llmstats .llm-provider-stat-label { display: block; font-size: 10px; text-transform: uppercase; color: var(--llm-muted-text); }
+#db-llmstats .llm-provider-stat-value { display: block; font-weight: bold; font-size: 12px; color: var(--llm-text); }
+#db-llmstats .llm-provider-models { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; color: var(--llm-text); }
+#db-llmstats .llm-provider-models th, #db-llmstats .llm-provider-models td { text-align: left; padding: 3px 6px; border-top: 1px solid var(--llm-border-soft); }
+#db-llmstats .llm-provider-models .num { text-align: right; white-space: nowrap; }
+#db-llmstats .llm-provider-note { font-size: 11px; color: var(--llm-muted-text); margin-top: 4px; }
 </style>
 
 <script type="text/javascript">
@@ -594,6 +612,8 @@ EOT;
     var llmstatsText = <?=$llmstats_text_js?>;
     var refreshEnabled = <?=json_encode($refresh_enabled)?>;
     var refreshInterval = <?=json_encode($refresh_interval_ms)?>;
+    var llmstatsProvidersEnabled = <?=json_encode($providers_enabled)?>;
+    var llmstatsProvidersRequest = null;
     var llmstatsCsrf = <?=$llmstats_csrf?>;
     var llmstatsRequest = null;
     var llmstatsActionPending = false;
@@ -971,7 +991,114 @@ EOT;
         llmstats_select_tab(tabs.eq(targetIndex));
     }
 
+    function llmstats_fmt_tokens(n) {
+        if (n === null || n === undefined) return 'n/a';
+        if (n >= 1000000) return (n / 1000000).toFixed(2) + ' M';
+        if (n >= 1000) return (n / 1000).toFixed(1) + ' k';
+        return String(n);
+    }
+
+    function llmstats_fmt_count(n) {
+        return (n === null || n === undefined) ? 'n/a' : Number(n).toLocaleString();
+    }
+
+    function llmstats_fmt_pct(r) {
+        return (r === null || r === undefined) ? 'n/a' : (r * 100).toFixed(1) + ' %';
+    }
+
+    function llmstats_fmt_cost(c) {
+        return (c === null || c === undefined) ? 'n/a' : '$' + Number(c).toFixed(2);
+    }
+
+    function llmstats_build_provider_card(p) {
+        var card = $('<div>').addClass('llm-provider-card');
+        var top = $('<div>').addClass('llm-provider-top');
+        $('<span>').addClass('llm-provider-dot' + (p.status === 'ok' ? ' ok' : '')).appendTo(top);
+        $('<span>').text(p.label || p.id).appendTo(top);
+        top.appendTo(card);
+
+        if (p.status !== 'ok') {
+            $('<div>').addClass('llm-provider-error').text(p.error || 'Unavailable').appendTo(card);
+            return card;
+        }
+
+        var stats = [
+            ['Requests', p.requestsAvailable === false ? 'n/a' : llmstats_fmt_count(p.requests)],
+            ['Avg tokens / request', llmstats_fmt_count(p.avgTokensPerRequest)],
+            ['Tokens in', llmstats_fmt_tokens(p.inputTokens)],
+            ['Tokens out', llmstats_fmt_tokens(p.outputTokens)],
+            ['Cache hit rate', llmstats_fmt_pct(p.cacheHitRate)],
+            ['Cost', llmstats_fmt_cost(p.cost)]
+        ];
+        var grid = $('<div>').addClass('llm-provider-stats');
+        stats.forEach(function(s) {
+            var cell = $('<div>');
+            $('<span>').addClass('llm-provider-stat-label').text(s[0]).appendTo(cell);
+            $('<span>').addClass('llm-provider-stat-value').text(s[1]).appendTo(cell);
+            cell.appendTo(grid);
+        });
+        grid.appendTo(card);
+
+        if ((p.models || []).length > 0) {
+            var table = $('<table>').addClass('llm-provider-models');
+            var head = $('<tr>');
+            $('<th>').text('Model').appendTo(head);
+            $('<th>').addClass('num').text('Requests').appendTo(head);
+            $('<th>').addClass('num').text('Tokens').appendTo(head);
+            $('<th>').addClass('num').text('Cost').appendTo(head);
+            $('<thead>').append(head).appendTo(table);
+            var body = $('<tbody>');
+            p.models.forEach(function(m) {
+                var row = $('<tr>');
+                $('<td>').text(m.model).appendTo(row);
+                $('<td>').addClass('num').text(p.requestsAvailable === false ? 'n/a' : llmstats_fmt_count(m.requests)).appendTo(row);
+                $('<td>').addClass('num').text(llmstats_fmt_tokens(m.tokens)).appendTo(row);
+                $('<td>').addClass('num').text(llmstats_fmt_cost(m.cost)).appendTo(row);
+                body.append(row);
+            });
+            body.appendTo(table);
+            table.appendTo(card);
+        }
+
+        if (p.windowNote) $('<div>').addClass('llm-provider-note').text(p.windowNote).appendTo(card);
+        if (p.costNote) $('<div>').addClass('llm-provider-note').text(p.costNote).appendTo(card);
+        return card;
+    }
+
+    function llmstats_render_providers(data) {
+        var box = $('#llmstats-providers');
+        if (!box.length) return;
+        box.empty();
+        var providers = (data && data.providers) || [];
+        if (providers.length === 0) return;
+
+        var head = $('<div>').addClass('llm-providers-head');
+        $('<span>').text('AI router · last ' + data.windowHours + ' h').appendTo(head);
+        $('<span>').text('Updates every ' + data.refreshMinutes + ' min').appendTo(head);
+        box.append(head);
+        providers.forEach(function(p) {
+            box.append(llmstats_build_provider_card(p));
+        });
+    }
+
+    function llmstats_providers_load() {
+        if (!llmstatsProvidersEnabled || llmstatsProvidersRequest) return;
+
+        llmstatsProvidersRequest = $.ajax({
+            url: '/plugins/llmstats/llmstats_api.php?action=get_provider_stats',
+            dataType: 'json',
+            timeout: 90000
+        }).done(function(data) {
+            llmstats_render_providers(data);
+        }).fail(function() {
+            $('#llmstats-providers').empty().append($('<div>').addClass('llm-provider-error').text('Provider stats unavailable.'));
+        }).always(function() {
+            llmstatsProvidersRequest = null;
+        });
+    }
+
     function llmstats_status() {
+        llmstats_providers_load();
         if (llmstatsRequest) {
             return llmstatsRequest;
         }

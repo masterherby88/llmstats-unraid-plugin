@@ -1,0 +1,389 @@
+<?php
+// AI router provider statistics (OpenRouter, OpenAI, Anthropic).
+// Uses management/admin keys only. Keys never leave the server.
+
+const LLMSTATS_PROVIDER_CACHE = '/tmp/llmstats-providers.json';
+const LLMSTATS_PROVIDER_WINDOW = 86400; // rolling 24h
+
+function llmstats_provider_defs()
+{
+    return [
+        'openrouter' => ['label' => 'OpenRouter', 'keyHint' => 'Management key (sk-or-v1-…)'],
+        'openai'     => ['label' => 'OpenAI',     'keyHint' => 'Admin key (sk-admin-…)'],
+        'anthropic'  => ['label' => 'Anthropic',  'keyHint' => 'Admin key (sk-ant-admin…)'],
+    ];
+}
+
+function llmstats_provider_refresh_options()
+{
+    return [5, 15, 30, 60, 120];
+}
+
+function llmstats_provider_refresh_minutes($value)
+{
+    $minutes = is_numeric($value) ? (int)$value : 15;
+
+    return in_array($minutes, llmstats_provider_refresh_options(), true) ? $minutes : 15;
+}
+
+function llmstats_provider_enabled_ids($cfg)
+{
+    $ids = [];
+    foreach (array_keys(llmstats_provider_defs()) as $id) {
+        if (($cfg['PROVIDER_' . strtoupper($id) . '_ENABLED'] ?? '0') === '1') {
+            $ids[] = $id;
+        }
+    }
+
+    return $ids;
+}
+
+function llmstats_provider_key($cfg, $id)
+{
+    return trim((string)($cfg['PROVIDER_' . strtoupper($id) . '_KEY'] ?? ''));
+}
+
+function llmstats_provider_http_get($url, $headers, $timeout = 20)
+{
+    $result = ['code' => 0, 'body' => '', 'error' => ''];
+    if (!function_exists('curl_init')) {
+        $result['error'] = 'PHP curl extension missing';
+        return $result;
+    }
+
+    $handle = curl_init($url);
+    curl_setopt_array($handle, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_FOLLOWLOCATION => false,
+    ]);
+    $body = curl_exec($handle);
+    $result['code'] = (int)curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+    if ($body === false) {
+        $result['error'] = curl_error($handle);
+    } else {
+        $result['body'] = (string)$body;
+    }
+    curl_close($handle);
+
+    return $result;
+}
+
+// Returns [array|null $data, string $error].
+function llmstats_provider_get_json($url, $headers)
+{
+    $r = llmstats_provider_http_get($url, $headers);
+    if ($r['error'] !== '') {
+        return [null, 'Network error: ' . $r['error']];
+    }
+    if ($r['code'] === 401 || $r['code'] === 403) {
+        return [null, 'Key rejected or missing admin/management permission (HTTP ' . $r['code'] . ').'];
+    }
+    $data = json_decode($r['body'], true);
+    if ($r['code'] < 200 || $r['code'] >= 300) {
+        $msg = is_array($data) ? ($data['error']['message'] ?? ($data['error'] ?? '')) : '';
+        $msg = is_string($msg) ? $msg : '';
+
+        return [null, 'HTTP ' . $r['code'] . ($msg !== '' ? ': ' . $msg : '')];
+    }
+    if (!is_array($data)) {
+        return [null, 'Invalid JSON response.'];
+    }
+
+    return [$data, ''];
+}
+
+function llmstats_provider_new_totals()
+{
+    return [
+        'requests' => 0,
+        'inputTokens' => 0,        // all input-side tokens incl. cache reads/writes
+        'cachedInputTokens' => 0,  // cache reads
+        'outputTokens' => 0,
+        'cost' => null,            // USD, null when provider gives no cost
+        'hasCacheData' => false,
+        'models' => [],
+    ];
+}
+
+function llmstats_provider_add_model(&$totals, $model, $requests, $inputTokens, $cachedTokens, $outputTokens, $cost = null)
+{
+    $totals['requests'] += $requests;
+    $totals['inputTokens'] += $inputTokens;
+    $totals['cachedInputTokens'] += $cachedTokens;
+    $totals['outputTokens'] += $outputTokens;
+
+    $name = $model !== '' ? $model : 'unknown';
+    if (!isset($totals['models'][$name])) {
+        $totals['models'][$name] = ['model' => $name, 'requests' => 0, 'tokens' => 0, 'cost' => null];
+    }
+    $totals['models'][$name]['requests'] += $requests;
+    $totals['models'][$name]['tokens'] += $inputTokens + $outputTokens;
+    if ($cost !== null) {
+        $totals['models'][$name]['cost'] = ($totals['models'][$name]['cost'] ?? 0) + $cost;
+    }
+}
+
+// OpenAI: completions usage (hourly buckets, grouped by model) + daily cost buckets.
+function llmstats_provider_fetch_openai($key, $since, $until)
+{
+    $headers = ['Authorization: Bearer ' . $key, 'Accept: application/json'];
+    $totals = llmstats_provider_new_totals();
+    $totals['hasCacheData'] = true;
+
+    $page = '';
+    for ($i = 0; $i < 10; $i++) {
+        $url = 'https://api.openai.com/v1/organization/usage/completions?start_time=' . $since
+            . '&end_time=' . $until . '&bucket_width=1h&limit=24&group_by[]=model'
+            . ($page !== '' ? '&page=' . rawurlencode($page) : '');
+        [$data, $err] = llmstats_provider_get_json($url, $headers);
+        if ($data === null) {
+            return [null, $err];
+        }
+        foreach (($data['data'] ?? []) as $bucket) {
+            foreach (($bucket['results'] ?? []) as $row) {
+                llmstats_provider_add_model(
+                    $totals,
+                    (string)($row['model'] ?? ''),
+                    (int)($row['num_model_requests'] ?? 0),
+                    (int)($row['input_tokens'] ?? 0),
+                    (int)($row['input_cached_tokens'] ?? 0),
+                    (int)($row['output_tokens'] ?? 0)
+                );
+            }
+        }
+        $page = (string)($data['next_page'] ?? '');
+        if (empty($data['has_more']) || $page === '') {
+            break;
+        }
+    }
+
+    // Costs are daily buckets; the window is rounded down to the UTC day.
+    $dayStart = $since - ($since % 86400);
+    $costUrl = 'https://api.openai.com/v1/organization/costs?start_time=' . $dayStart
+        . '&end_time=' . $until . '&bucket_width=1d&limit=7';
+    [$costData, $costErr] = llmstats_provider_get_json($costUrl, $headers);
+    if ($costData !== null) {
+        $cost = 0.0;
+        foreach (($costData['data'] ?? []) as $bucket) {
+            foreach (($bucket['results'] ?? []) as $row) {
+                $cost += (float)($row['amount']['value'] ?? 0);
+            }
+        }
+        $totals['cost'] = $cost;
+    } else {
+        $totals['costNote'] = 'Cost unavailable: ' . $costErr;
+    }
+
+    return [$totals, ''];
+}
+
+// Anthropic: message usage report (hourly, grouped by model) + daily cost report.
+function llmstats_provider_fetch_anthropic($key, $since, $until)
+{
+    $headers = ['x-api-key: ' . $key, 'anthropic-version: 2023-06-01', 'Accept: application/json'];
+    $totals = llmstats_provider_new_totals();
+    $totals['hasCacheData'] = true;
+    $start = gmdate('Y-m-d\TH:i:s\Z', $since);
+    $end = gmdate('Y-m-d\TH:i:s\Z', $until);
+
+    $page = '';
+    for ($i = 0; $i < 10; $i++) {
+        $url = 'https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=' . rawurlencode($start)
+            . '&ending_at=' . rawurlencode($end) . '&bucket_width=1h&limit=24&group_by[]=model'
+            . ($page !== '' ? '&page=' . rawurlencode($page) : '');
+        [$data, $err] = llmstats_provider_get_json($url, $headers);
+        if ($data === null) {
+            return [null, $err];
+        }
+        foreach (($data['data'] ?? []) as $bucket) {
+            foreach (($bucket['results'] ?? []) as $row) {
+                $cacheRead = (int)($row['cache_read_input_tokens'] ?? 0);
+                $cacheWrite = 0;
+                foreach (($row['cache_creation'] ?? []) as $v) {
+                    $cacheWrite += (int)$v;
+                }
+                $uncached = (int)($row['uncached_input_tokens'] ?? 0);
+                llmstats_provider_add_model(
+                    $totals,
+                    (string)($row['model'] ?? ''),
+                    0,
+                    $uncached + $cacheRead + $cacheWrite,
+                    $cacheRead,
+                    (int)($row['output_tokens'] ?? 0)
+                );
+            }
+        }
+        $page = (string)($data['next_page'] ?? '');
+        if (empty($data['has_more']) || $page === '') {
+            break;
+        }
+    }
+
+    // Anthropic message usage report has no request count; count via cost is not possible,
+    // so requests are left at 0 and shown as n/a.
+    $totals['requestsAvailable'] = false;
+
+    $dayStart = gmdate('Y-m-d\TH:i:s\Z', $since - ($since % 86400));
+    $costUrl = 'https://api.anthropic.com/v1/organizations/cost_report?starting_at=' . rawurlencode($dayStart)
+        . '&ending_at=' . rawurlencode($end) . '&bucket_width=1d';
+    [$costData, $costErr] = llmstats_provider_get_json($costUrl, $headers);
+    if ($costData !== null) {
+        $cents = 0.0;
+        foreach (($costData['data'] ?? []) as $bucket) {
+            foreach (($bucket['results'] ?? []) as $row) {
+                $cents += (float)($row['amount'] ?? 0);
+            }
+        }
+        $totals['cost'] = $cents / 100.0;
+    } else {
+        $totals['costNote'] = 'Cost unavailable: ' . $costErr;
+    }
+
+    return [$totals, ''];
+}
+
+// OpenRouter: activity endpoint returns daily rows (UTC) per model; only today's rows are used.
+function llmstats_provider_fetch_openrouter($key, $since, $until)
+{
+    $headers = ['Authorization: Bearer ' . $key, 'Accept: application/json'];
+    [$data, $err] = llmstats_provider_get_json('https://openrouter.ai/api/v1/activity', $headers);
+    if ($data === null) {
+        return [null, $err];
+    }
+
+    $totals = llmstats_provider_new_totals();
+    $today = gmdate('Y-m-d');
+    $cost = 0.0;
+    foreach (($data['data'] ?? []) as $row) {
+        if (($row['date'] ?? '') !== $today) {
+            continue;
+        }
+        $rowCost = (float)($row['usage'] ?? 0);
+        $cost += $rowCost;
+        llmstats_provider_add_model(
+            $totals,
+            (string)($row['model'] ?? ''),
+            (int)($row['requests'] ?? 0),
+            (int)($row['prompt_tokens'] ?? 0),
+            0,
+            (int)($row['completion_tokens'] ?? 0) + (int)($row['reasoning_tokens'] ?? 0),
+            $rowCost
+        );
+    }
+    $totals['cost'] = $cost;
+    $totals['windowNote'] = 'Today (UTC) - OpenRouter reports daily totals only';
+
+    return [$totals, ''];
+}
+
+function llmstats_provider_fetch($id, $key, $since, $until)
+{
+    switch ($id) {
+        case 'openrouter':
+            return llmstats_provider_fetch_openrouter($key, $since, $until);
+        case 'openai':
+            return llmstats_provider_fetch_openai($key, $since, $until);
+        case 'anthropic':
+            return llmstats_provider_fetch_anthropic($key, $since, $until);
+    }
+
+    return [null, 'Unknown provider.'];
+}
+
+function llmstats_provider_summarize($id, $label, $totals)
+{
+    $models = array_values($totals['models']);
+    usort($models, function ($a, $b) {
+        return $b['tokens'] <=> $a['tokens'];
+    });
+    $models = array_slice($models, 0, 8);
+
+    $requests = (int)$totals['requests'];
+    $tokens = $totals['inputTokens'] + $totals['outputTokens'];
+    $cacheRate = ($totals['hasCacheData'] && $totals['inputTokens'] > 0)
+        ? $totals['cachedInputTokens'] / $totals['inputTokens']
+        : null;
+    $avg = $requests > 0 ? (int)round($tokens / $requests) : null;
+
+    return [
+        'id' => $id,
+        'label' => $label,
+        'status' => 'ok',
+        'error' => '',
+        'requests' => $requests,
+        'requestsAvailable' => $totals['requestsAvailable'] ?? true,
+        'inputTokens' => (int)$totals['inputTokens'],
+        'cachedInputTokens' => (int)$totals['cachedInputTokens'],
+        'outputTokens' => (int)$totals['outputTokens'],
+        'totalTokens' => (int)$tokens,
+        'avgTokensPerRequest' => $avg,
+        'cacheHitRate' => $cacheRate,
+        'cost' => $totals['cost'],
+        'costNote' => $totals['costNote'] ?? '',
+        'windowNote' => $totals['windowNote'] ?? '',
+        'models' => $models,
+    ];
+}
+
+// Builds the provider stats payload. Results are cached in /tmp for the configured window;
+// the cache is invalidated when the set of enabled providers or their keys changes.
+function llmstats_provider_stats($cfg, $now = null)
+{
+    $now = $now ?? time();
+    $minutes = llmstats_provider_refresh_minutes($cfg['PROVIDER_REFRESH_MINUTES'] ?? 15);
+    $defs = llmstats_provider_defs();
+    $enabled = llmstats_provider_enabled_ids($cfg);
+
+    $sigParts = [];
+    foreach ($enabled as $id) {
+        $sigParts[] = $id . ':' . hash('sha256', llmstats_provider_key($cfg, $id));
+    }
+    $sig = hash('sha256', implode('|', $sigParts) . '|' . LLMSTATS_PROVIDER_WINDOW);
+
+    $cached = @file_get_contents(LLMSTATS_PROVIDER_CACHE);
+    $cached = $cached !== false ? json_decode($cached, true) : null;
+    if (is_array($cached)
+        && ($cached['sig'] ?? '') === $sig
+        && ($cached['refreshMinutes'] ?? 0) === $minutes
+        && ($now - (int)($cached['generatedAt'] ?? 0)) < $minutes * 60
+    ) {
+        return $cached['payload'];
+    }
+
+    $since = $now - LLMSTATS_PROVIDER_WINDOW;
+    $providers = [];
+    foreach ($enabled as $id) {
+        $label = $defs[$id]['label'];
+        $key = llmstats_provider_key($cfg, $id);
+        if ($key === '') {
+            $providers[] = ['id' => $id, 'label' => $label, 'status' => 'error', 'error' => 'No key saved.'];
+            continue;
+        }
+        [$totals, $err] = llmstats_provider_fetch($id, $key, $since, $now);
+        if ($totals === null) {
+            $providers[] = ['id' => $id, 'label' => $label, 'status' => 'error', 'error' => $err];
+            continue;
+        }
+        $providers[] = llmstats_provider_summarize($id, $label, $totals);
+    }
+
+    $payload = [
+        'enabled' => count($enabled) > 0,
+        'windowHours' => LLMSTATS_PROVIDER_WINDOW / 3600,
+        'refreshMinutes' => $minutes,
+        'generatedAt' => $now,
+        'providers' => $providers,
+    ];
+
+    @file_put_contents(
+        LLMSTATS_PROVIDER_CACHE,
+        json_encode(['sig' => $sig, 'refreshMinutes' => $minutes, 'generatedAt' => $now, 'payload' => $payload]),
+        LOCK_EX
+    );
+
+    return $payload;
+}
