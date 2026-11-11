@@ -246,7 +246,8 @@ function llmstats_provider_fetch_anthropic($key, $since, $until)
     return [$totals, ''];
 }
 
-// OpenRouter: activity endpoint returns daily rows (UTC) per model; only today's rows are used.
+// OpenRouter: activity endpoint returns daily rows (UTC, "YYYY-MM-DD HH:MM:SS") per model.
+// Data lags about a day, so yesterday and today are used as the window.
 function llmstats_provider_fetch_openrouter($key, $since, $until)
 {
     $headers = ['Authorization: Bearer ' . $key, 'Accept: application/json'];
@@ -256,10 +257,11 @@ function llmstats_provider_fetch_openrouter($key, $since, $until)
     }
 
     $totals = llmstats_provider_new_totals();
-    $today = gmdate('Y-m-d');
+    $totals['hasCacheData'] = true;
+    $days = [gmdate('Y-m-d', $until - 86400), gmdate('Y-m-d', $until)];
     $cost = 0.0;
     foreach (($data['data'] ?? []) as $row) {
-        if (($row['date'] ?? '') !== $today) {
+        if (!in_array(substr((string)($row['date'] ?? ''), 0, 10), $days, true)) {
             continue;
         }
         $rowCost = (float)($row['usage'] ?? 0);
@@ -269,13 +271,13 @@ function llmstats_provider_fetch_openrouter($key, $since, $until)
             (string)($row['model'] ?? ''),
             (int)($row['requests'] ?? 0),
             (int)($row['prompt_tokens'] ?? 0),
-            0,
+            (int)($row['cached_tokens'] ?? 0),
             (int)($row['completion_tokens'] ?? 0) + (int)($row['reasoning_tokens'] ?? 0),
             $rowCost
         );
     }
     $totals['cost'] = $cost;
-    $totals['windowNote'] = 'Today (UTC) - OpenRouter reports daily totals only';
+    $totals['windowNote'] = 'Yesterday + today (UTC) - OpenRouter reports daily totals; data lags ~1 day';
 
     return [$totals, ''];
 }
