@@ -1,5 +1,8 @@
 ### Unreleased
 - Added AI router provider stats for OpenRouter, OpenAI and Anthropic: 24h tokens, average tokens per request, cache hit rate, cost and top models, shown as cards below the server panels.
+- Multiple keys per provider ("+ Add key"); each key is its own card. Keys are shown masked.
+- Key-only mode (regular OpenRouter key) shows n/a for tokens/requests instead of 0.
+- Server view is hidden when no local endpoint is configured.
 - Collapsed dashboard shows provider chips (tokens, cache hit rate, cost).
 - API key filter per provider and per-key table (requests, tokens, cache, cost). OpenRouter per-key cost is today (UTC).
 - Settings: per-provider enable checkbox, management/admin key and update interval (5-120 minutes).

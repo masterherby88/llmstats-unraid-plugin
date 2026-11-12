@@ -39,9 +39,31 @@ function llmstats_provider_enabled_ids($cfg)
     return $ids;
 }
 
-function llmstats_provider_key($cfg, $id)
+// All keys for a provider: comma-separated PROVIDER_X_KEYS plus the legacy single PROVIDER_X_KEY.
+function llmstats_provider_keys($cfg, $id)
 {
-    return trim((string)($cfg['PROVIDER_' . strtoupper($id) . '_KEY'] ?? ''));
+    $up = strtoupper($id);
+    $list = [];
+    foreach (explode(',', (string)($cfg['PROVIDER_' . $up . '_KEYS'] ?? '')) as $k) {
+        $k = trim($k);
+        if ($k !== '') {
+            $list[] = $k;
+        }
+    }
+    $legacy = trim((string)($cfg['PROVIDER_' . $up . '_KEY'] ?? ''));
+    if ($legacy !== '') {
+        $list[] = $legacy;
+    }
+
+    return array_values(array_unique($list));
+}
+
+// Keys are never shown in full, only as a short mask.
+function llmstats_provider_mask_key($key)
+{
+    $n = strlen($key);
+
+    return $n <= 12 ? str_repeat('*', $n) : substr($key, 0, 8) . '…' . substr($key, -4);
 }
 
 function llmstats_provider_http_get($url, $headers, $timeout = 20)
@@ -336,6 +358,7 @@ function llmstats_provider_fetch_openrouter_key_only($headers, $activityErr)
     $totals = llmstats_provider_new_totals();
     $totals['requestsAvailable'] = false;
     $totals['hasCacheData'] = false;
+    $totals['keyOnly'] = true;
     $totals['cost'] = (float)($d['usage_daily'] ?? 0);
     $totals['windowNote'] = 'Key-only mode: this key\'s cost today (UTC). Tokens, requests and models need a management key.';
     $totals['keys']['self'] = [
@@ -429,7 +452,7 @@ function llmstats_provider_summarize($id, $label, $totals)
 
     // Short summary for the collapsed dashboard row.
     $meta = [];
-    if ($tokens > 0) {
+    if (empty($totals['keyOnly']) && $tokens > 0) {
         $meta[] = llmstats_provider_fmt_tokens($tokens);
     }
     if ($cacheRate !== null) {
@@ -439,20 +462,22 @@ function llmstats_provider_summarize($id, $label, $totals)
         $meta[] = '$' . number_format((float)$totals['cost'], 2, '.', '');
     }
 
+    $keyOnly = !empty($totals['keyOnly']);
+
     return [
         'id' => $id,
         'label' => $label,
         'status' => 'ok',
         'error' => '',
         'chipMeta' => implode(' · ', $meta),
-        'requests' => $requests,
+        'requests' => $keyOnly ? null : $requests,
         'requestsAvailable' => $totals['requestsAvailable'],
-        'inputTokens' => (int)$totals['inputTokens'],
-        'cachedInputTokens' => (int)$totals['cachedInputTokens'],
-        'outputTokens' => (int)$totals['outputTokens'],
-        'totalTokens' => (int)$tokens,
-        'avgTokensPerRequest' => $avg,
-        'cacheHitRate' => $cacheRate,
+        'inputTokens' => $keyOnly ? null : (int)$totals['inputTokens'],
+        'cachedInputTokens' => $keyOnly ? null : (int)$totals['cachedInputTokens'],
+        'outputTokens' => $keyOnly ? null : (int)$totals['outputTokens'],
+        'totalTokens' => $keyOnly ? null : (int)$tokens,
+        'avgTokensPerRequest' => $keyOnly ? null : $avg,
+        'cacheHitRate' => $keyOnly ? null : $cacheRate,
         'cost' => $totals['cost'],
         'costNote' => $totals['costNote'],
         'keyNote' => $totals['keyNote'],
@@ -471,9 +496,17 @@ function llmstats_provider_stats($cfg, $now = null)
     $defs = llmstats_provider_defs();
     $enabled = llmstats_provider_enabled_ids($cfg);
 
-    $sigParts = [];
+    // One entry per (provider, key). Each key gets its own card.
+    $entries = [];
     foreach ($enabled as $id) {
-        $sigParts[] = $id . ':' . hash('sha256', llmstats_provider_key($cfg, $id));
+        foreach (llmstats_provider_keys($cfg, $id) as $key) {
+            $entries[] = ['id' => $id, 'key' => $key];
+        }
+    }
+
+    $sigParts = [];
+    foreach ($entries as $e) {
+        $sigParts[] = $e['id'] . ':' . hash('sha256', $e['key']);
     }
     $sig = hash('sha256', implode('|', $sigParts) . '|' . LLMSTATS_PROVIDER_WINDOW . '|' . LLMSTATS_PROVIDER_CACHE_VERSION);
 
@@ -489,19 +522,21 @@ function llmstats_provider_stats($cfg, $now = null)
 
     $since = $now - LLMSTATS_PROVIDER_WINDOW;
     $providers = [];
-    foreach ($enabled as $id) {
-        $label = $defs[$id]['label'];
-        $key = llmstats_provider_key($cfg, $id);
-        if ($key === '') {
-            $providers[] = ['id' => $id, 'label' => $label, 'status' => 'error', 'error' => 'No key saved.'];
-            continue;
-        }
-        [$totals, $err] = llmstats_provider_fetch($id, $key, $since, $now);
+    foreach ($entries as $e) {
+        $id = $e['id'];
+        $label = $defs[$id]['label'] . ' · ' . llmstats_provider_mask_key($e['key']);
+        $pid = $id . '-' . substr(hash('sha256', $e['key']), 0, 8);
+        [$totals, $err] = llmstats_provider_fetch($id, $e['key'], $since, $now);
         if ($totals === null) {
-            $providers[] = ['id' => $id, 'label' => $label, 'status' => 'error', 'error' => $err];
+            $providers[] = ['id' => $pid, 'label' => $label, 'status' => 'error', 'error' => $err];
             continue;
         }
-        $providers[] = llmstats_provider_summarize($id, $label, $totals);
+        $providers[] = llmstats_provider_summarize($pid, $label, $totals);
+    }
+    if (count($entries) === 0 && count($enabled) > 0) {
+        foreach ($enabled as $id) {
+            $providers[] = ['id' => $id, 'label' => $defs[$id]['label'], 'status' => 'error', 'error' => 'No key saved.'];
+        }
     }
 
     $payload = [
