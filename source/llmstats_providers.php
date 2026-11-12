@@ -267,7 +267,8 @@ function llmstats_provider_fetch_openrouter($key, $since, $until)
     $headers = ['Authorization: Bearer ' . $key, 'Accept: application/json'];
     [$data, $err] = llmstats_provider_get_json('https://openrouter.ai/api/v1/activity', $headers);
     if ($data === null) {
-        return [null, $err];
+        // No management rights: fall back to key-only mode (cost of this key, no tokens/requests).
+        return llmstats_provider_fetch_openrouter_key_only($headers, $err);
     }
 
     $totals = llmstats_provider_new_totals();
@@ -318,6 +319,41 @@ function llmstats_provider_fetch_openrouter($key, $since, $until)
     } else {
         $totals['keyNote'] = 'Keys unavailable: ' . $keysErr;
     }
+
+    return [$totals, ''];
+}
+
+// Key-only mode for OpenRouter: a regular API key can read its own usage via /api/v1/key.
+// That gives cost (today, week, month) and the limit, but no tokens, requests or models.
+function llmstats_provider_fetch_openrouter_key_only($headers, $activityErr)
+{
+    [$me, $meErr] = llmstats_provider_get_json('https://openrouter.ai/api/v1/key', $headers);
+    if ($me === null) {
+        return [null, $activityErr . ' Key info also failed: ' . $meErr];
+    }
+    $d = $me['data'] ?? [];
+
+    $totals = llmstats_provider_new_totals();
+    $totals['requestsAvailable'] = false;
+    $totals['hasCacheData'] = false;
+    $totals['cost'] = (float)($d['usage_daily'] ?? 0);
+    $totals['windowNote'] = 'Key-only mode: this key\'s cost today (UTC). Tokens, requests and models need a management key.';
+    $totals['keys']['self'] = [
+        'id' => 'self',
+        'name' => (string)($d['label'] ?? 'this key'),
+        'requests' => null,
+        'inputTokens' => null,
+        'cachedInputTokens' => null,
+        'outputTokens' => null,
+        'cost' => (float)($d['usage_daily'] ?? 0),
+        'costWeek' => (float)($d['usage_weekly'] ?? 0),
+        'costMonth' => (float)($d['usage_monthly'] ?? 0),
+        'disabled' => !empty($d['disabled']),
+    ];
+    $limit = $d['limit'] ?? null;
+    $totals['keyNote'] = $limit !== null
+        ? 'Key limit: $' . number_format((float)$limit, 2, '.', '') . ', remaining $' . number_format((float)($d['limit_remaining'] ?? 0), 2, '.', '') . '.'
+        : 'No spending limit set on this key.';
 
     return [$totals, ''];
 }
