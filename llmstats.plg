@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name "llmstats">
  <!ENTITY author "masterherby88">
- <!ENTITY version "2026.11.11-dev">
+ <!ENTITY version "2026.11.12a-dev">
  <!ENTITY branch "dev">
  <!ENTITY gitURL "https://github.com/masterherby88/llmstats-unraid-plugin">
  <!ENTITY supportURL "https://forums.unraid.net/topic/199438-plugin-llmstats">
@@ -13,11 +13,13 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&selfURL;" min="6.9.0" support="&supportURL;">
 
 <CHANGES>
-### 2026.11.11-dev
+### 2026.11.12a-dev
 - Development build from the 'dev' branch. For testing purposes only.
 
 ### Unreleased
 - Added AI router provider stats for OpenRouter, OpenAI and Anthropic: 24h tokens, average tokens per request, cache hit rate, cost and top models, shown as cards below the server panels.
+- Collapsed dashboard shows provider chips (tokens, cache hit rate, cost).
+- API key filter per provider and per-key table (requests, tokens, cache, cost). OpenRouter per-key cost is today (UTC).
 - Settings: per-provider enable checkbox, management/admin key and update interval (5-120 minutes).
 
 ### 2026.06.23
@@ -47,7 +49,7 @@
 
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;.txz" Run="upgradepkg --install-new">
 <URL>&pluginURL;</URL>
-<MD5>ce3d3be3d3caa6ac0703f8721a7dc01f</MD5>
+<MD5>aec00076345b3bfa8b7d3858e65ca8ea</MD5>
 </FILE>
 
 <FILE Run="/bin/bash">
