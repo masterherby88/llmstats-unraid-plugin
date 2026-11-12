@@ -1199,9 +1199,15 @@ EOT;
             llmstatsConfirmUnload = !data || data.confirmUnload !== false;
 
             if (servers.length === 0) {
-                llmstats_render_empty_state(llmstats_text('noServers', 'No servers configured.'));
+                // No local endpoint: hide the server view. Only show the empty hint if no provider is active either.
+                $('#llmstats-tab-shell, #llmstats-panels').hide();
+                if (!llmstatsProvidersEnabled) {
+                    $('#llmstats-panels').show();
+                    llmstats_render_empty_state(llmstats_text('noServers', 'No servers configured.'));
+                }
                 return;
             }
+            $('#llmstats-tab-shell, #llmstats-panels').show();
 
             var tabBar = $('#llmstats-tab-bar');
             var previouslySelected = tabBar.find('.llm-tab.is-selected').data('server-id');
