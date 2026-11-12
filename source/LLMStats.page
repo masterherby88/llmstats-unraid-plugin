@@ -46,7 +46,9 @@ $settings_title = htmlspecialchars($llmstats_text['settings'], ENT_QUOTES, 'UTF-
 $refresh_title = htmlspecialchars($llmstats_text['refresh'], ENT_QUOTES, 'UTF-8');
 $last_update_text = htmlspecialchars($llmstats_text['lastUpdate'], ENT_QUOTES, 'UTF-8');
 $unload_all_text = htmlspecialchars($llmstats_text['unloadAll'], ENT_QUOTES, 'UTF-8');
-$providers_html = $providers_enabled ? '<div id="llmstats-providers" class="llm-providers"></div>' : '';
+$providers_html = $providers_enabled
+    ? '<div class="llm-section" id="llmstats-router-section"><div class="llm-section-head" data-section="router" role="button" tabindex="0"><span>AI router</span><i class="fa fa-chevron-down llm-section-chevron" aria-hidden="true"></i></div><div class="llm-section-body" id="llmstats-router-body"><div id="llmstats-providers" class="llm-providers"></div></div></div>'
+    : '';
 
 $pluginname = 'llmstats';
 
@@ -82,10 +84,15 @@ $mytiles[$pluginname]['column1'] = <<<EOT
     <tr id="llmstats-content-row">
         <td>
             <div id="llmstats-content">
-                <div id="llmstats-tab-shell">
-                    <div id="llmstats-tab-bar" role="tablist" aria-label="{$tile_title}"></div>
+                <div class="llm-section" id="llmstats-local-section">
+                    <div class="llm-section-head" data-section="local" role="button" tabindex="0"><span>Local LLM</span><i class="fa fa-chevron-down llm-section-chevron" aria-hidden="true"></i></div>
+                    <div class="llm-section-body" id="llmstats-local-body">
+                        <div id="llmstats-tab-shell">
+                            <div id="llmstats-tab-bar" role="tablist" aria-label="{$tile_title}"></div>
+                        </div>
+                        <div id="llmstats-panels"></div>
+                    </div>
                 </div>
-                <div id="llmstats-panels"></div>
                 {$providers_html}
                 <div id="llmstats-footer">
                     <span><span class="llmstats-updated-at">{$last_update_text}</span> <span id="llmstats-timestamp"></span></span>
@@ -611,6 +618,11 @@ EOT;
 #db-llmstats .llm-key-table tr.is-selected td { color: var(--llm-strong-text); font-weight: bold; }
 #db-llmstats .llm-provider-chips { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
 #db-llmstats .llm-provider-chips .llm-chip { flex: 0 0 auto; }
+#db-llmstats .llm-section { margin-top: 8px; }
+#db-llmstats .llm-section-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 6px 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--llm-muted-text); border-top: 1px solid var(--llm-border-soft); }
+#db-llmstats .llm-section-head:hover { color: var(--llm-strong-text); }
+#db-llmstats .llm-section-chevron { transition: transform 0.15s; }
+#db-llmstats .llm-section-chevron.is-collapsed { transform: rotate(-90deg); }
 </style>
 
 <script type="text/javascript">
@@ -1172,6 +1184,33 @@ EOT;
         });
     }
 
+    function llmstats_section_get(key) {
+        try { return window.localStorage.getItem('llmstats-section-' + key) === '1'; } catch (e) { return false; }
+    }
+
+    function llmstats_section_set(key, collapsed) {
+        try { window.localStorage.setItem('llmstats-section-' + key, collapsed ? '1' : '0'); } catch (e) {}
+    }
+
+    function llmstats_section_apply() {
+        ['local', 'router'].forEach(function(key) {
+            var head = $('.llm-section-head[data-section="' + key + '"]');
+            if (!head.length) return;
+            var collapsed = llmstats_section_get(key);
+            head.closest('.llm-section').find('> .llm-section-body').toggle(!collapsed);
+            head.find('.llm-section-chevron').toggleClass('is-collapsed', collapsed);
+        });
+    }
+
+    $(document).on('click', '.llm-section-head', function() {
+        var key = $(this).attr('data-section');
+        var body = $(this).closest('.llm-section').find('> .llm-section-body');
+        var collapsed = body.is(':visible');
+        body.toggle(!collapsed);
+        $(this).find('.llm-section-chevron').toggleClass('is-collapsed', collapsed);
+        llmstats_section_set(key, collapsed);
+    });
+
     $(document).on('change', '#llmstats-providers .llm-key-filter', function() {
         llmstatsProviderFilter[$(this).attr('data-provider')] = $(this).val();
         llmstats_render_providers(llmstatsLastProviders, true);
@@ -1211,11 +1250,15 @@ EOT;
                 // No local endpoint: hide the server view. Only show the empty hint if no provider is active either.
                 $('#llmstats-tab-shell, #llmstats-panels').hide();
                 if (!llmstatsProvidersEnabled) {
+                    $('#llmstats-local-section, #llmstats-local-body').show();
                     $('#llmstats-panels').show();
                     llmstats_render_empty_state(llmstats_text('noServers', 'No servers configured.'));
+                } else {
+                    $('#llmstats-local-section').hide();
                 }
                 return;
             }
+            $('#llmstats-local-section').show();
             $('#llmstats-tab-shell, #llmstats-panels').show();
 
             var tabBar = $('#llmstats-tab-bar');
@@ -1379,6 +1422,7 @@ EOT;
         window.addEventListener('resize', llmstats_update_tab_edge_fades);
 
         llmstats_watch_collapse();
+        llmstats_section_apply();
 
         if (refreshEnabled && refreshInterval > 0) {
             llmstats_poll();
