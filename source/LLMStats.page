@@ -1075,6 +1075,7 @@ EOT;
                 ['Cost', llmstats_fmt_cost(p.cost)]
             ];
         }
+        stats = stats.filter(function(s) { return s[1] !== 'n/a'; });
         var grid = $('<div>').addClass('llm-provider-stats');
         stats.forEach(function(s) {
             var cell = $('<div>');
@@ -1087,20 +1088,23 @@ EOT;
         if (key) {
             $('<div>').addClass('llm-provider-note').text('Model breakdown is shown for all keys together.').appendTo(card);
         } else if ((p.models || []).length > 0) {
+            var mods = p.models;
+            var showMReq = p.requestsAvailable !== false;
+            var showMCost = mods.some(function(m) { return m.cost !== null && m.cost !== undefined; });
             var table = $('<table>').addClass('llm-provider-models');
             var head = $('<tr>');
             $('<th>').text('Model').appendTo(head);
-            $('<th>').addClass('num').text('Requests').appendTo(head);
+            if (showMReq) $('<th>').addClass('num').text('Requests').appendTo(head);
             $('<th>').addClass('num').text('Tokens').appendTo(head);
-            $('<th>').addClass('num').text('Cost').appendTo(head);
+            if (showMCost) $('<th>').addClass('num').text('Cost').appendTo(head);
             $('<thead>').append(head).appendTo(table);
             var body = $('<tbody>');
-            p.models.forEach(function(m) {
+            mods.forEach(function(m) {
                 var row = $('<tr>');
                 $('<td>').text(m.model).appendTo(row);
-                $('<td>').addClass('num').text(p.requestsAvailable === false ? 'n/a' : llmstats_fmt_count(m.requests)).appendTo(row);
+                if (showMReq) $('<td>').addClass('num').text(llmstats_fmt_count(m.requests)).appendTo(row);
                 $('<td>').addClass('num').text(llmstats_fmt_tokens(m.tokens)).appendTo(row);
-                $('<td>').addClass('num').text(llmstats_fmt_cost(m.cost)).appendTo(row);
+                if (showMCost) $('<td>').addClass('num').text(llmstats_fmt_cost(m.cost)).appendTo(row);
                 body.append(row);
             });
             body.appendTo(table);
@@ -1108,13 +1112,18 @@ EOT;
         }
 
         if (keys.length > 0) {
+            var notNull = function(f) { return keys.some(function(k) { return f(k) !== null && f(k) !== undefined; }); };
+            var kReq = p.requestsAvailable !== false && notNull(function(k) { return k.requests; });
+            var kTok = notNull(function(k) { return k.tokens; });
+            var kCache = notNull(function(k) { return k.cacheRate; });
+            var kCost = notNull(function(k) { return k.cost; });
             var kt = $('<table>').addClass('llm-provider-models llm-key-table');
             var kh = $('<tr>');
             $('<th>').text('API key').appendTo(kh);
-            $('<th>').addClass('num').text('Requests').appendTo(kh);
-            $('<th>').addClass('num').text('Tokens').appendTo(kh);
-            $('<th>').addClass('num').text('Cache').appendTo(kh);
-            $('<th>').addClass('num').text('Cost').appendTo(kh);
+            if (kReq) $('<th>').addClass('num').text('Requests').appendTo(kh);
+            if (kTok) $('<th>').addClass('num').text('Tokens').appendTo(kh);
+            if (kCache) $('<th>').addClass('num').text('Cache').appendTo(kh);
+            if (kCost) $('<th>').addClass('num').text('Cost').appendTo(kh);
             $('<thead>').append(kh).appendTo(kt);
             var kb = $('<tbody>');
             keys.forEach(function(k) {
@@ -1122,10 +1131,10 @@ EOT;
                 var nameCell = $('<td>').text((k.name || k.id) + (k.disabled ? ' (disabled)' : ''));
                 nameCell.attr('title', k.id);
                 nameCell.appendTo(row);
-                $('<td>').addClass('num').text(p.requestsAvailable === false ? 'n/a' : llmstats_fmt_count(k.requests)).appendTo(row);
-                $('<td>').addClass('num').text(llmstats_fmt_tokens(k.tokens)).appendTo(row);
-                $('<td>').addClass('num').text(llmstats_fmt_pct(k.cacheRate)).appendTo(row);
-                $('<td>').addClass('num').text(llmstats_fmt_cost(k.cost)).appendTo(row);
+                if (kReq) $('<td>').addClass('num').text(llmstats_fmt_count(k.requests)).appendTo(row);
+                if (kTok) $('<td>').addClass('num').text(llmstats_fmt_tokens(k.tokens)).appendTo(row);
+                if (kCache) $('<td>').addClass('num').text(llmstats_fmt_pct(k.cacheRate)).appendTo(row);
+                if (kCost) $('<td>').addClass('num').text(llmstats_fmt_cost(k.cost)).appendTo(row);
                 kb.append(row);
             });
             kb.appendTo(kt);
