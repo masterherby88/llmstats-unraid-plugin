@@ -4,7 +4,7 @@
 
 const LLMSTATS_PROVIDER_CACHE = '/tmp/llmstats-providers.json';
 const LLMSTATS_PROVIDER_WINDOW = 86400; // rolling 24h
-const LLMSTATS_PROVIDER_CACHE_VERSION = 'v2';
+const LLMSTATS_PROVIDER_CACHE_VERSION = 'v3';
 
 function llmstats_provider_defs()
 {
