@@ -76,7 +76,7 @@ $mytiles[$pluginname]['column1'] = <<<EOT
     <tr id="llmstats-collapsed-row" style="display:none;">
         <td>
             <div id="llmstats-chips" aria-label="Server summary"></div>
-            <div id="llmstats-provider-chips" aria-label="AI router summary"></div>
+            <div id="llmstats-provider-chips" class="llm-provider-chips" aria-label="AI router summary"></div>
         </td>
     </tr>
     <tr id="llmstats-content-row">
@@ -609,7 +609,8 @@ EOT;
 #db-llmstats .llm-provider-filter { margin-left: auto; }
 #db-llmstats .llm-key-filter { max-width: 260px; font-size: 12px; padding: 2px 4px; color: var(--llm-text); background: var(--llm-panel-surface); border: 1px solid var(--llm-border-soft); }
 #db-llmstats .llm-key-table tr.is-selected td { color: var(--llm-strong-text); font-weight: bold; }
-#db-llmstats .llm-provider-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#db-llmstats .llm-provider-chips { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+#db-llmstats .llm-provider-chips .llm-chip { flex: 0 0 auto; }
 </style>
 
 <script type="text/javascript">

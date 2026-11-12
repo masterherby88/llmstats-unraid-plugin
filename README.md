@@ -101,7 +101,7 @@ Official references:
 
 ## AI Router Providers
 
-The dashboard shows a card per enabled provider below the server panels, covering the last 24 hours. Collapsed, the dashboard header row shows one compact chip per provider (tokens, cache hit rate, cost). Each card has an API key filter and a per-key table with requests, tokens, cache hit rate and cost, so you can see which key causes which cost.
+The dashboard shows a card per enabled provider below the server panels, covering the last 24 hours. Collapsed, the dashboard header row shows one compact chip per provider (tokens, cache hit rate, cost). Key tables show n/a for tokens and requests on OpenRouter, because its API only reports cost per key. Each card has an API key filter and a per-key table with requests, tokens, cache hit rate and cost, so you can see which key causes which cost.
 
 | Provider | Key needed | Requests | Cache hit rate | Cost | Notes |
 |---|---|---|---|---|---|
